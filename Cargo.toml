@@ -15,7 +15,7 @@ categories = ["command-line-utilities", "network-programming"]
 clap = { version = "4", features = ["derive", "std"] }
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }
 
 # System calls
 nix = { version = "0.27", features = ["ptrace", "process", "signal", "uio"] }

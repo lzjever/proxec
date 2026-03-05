@@ -2,10 +2,5 @@
 // Copyright (C) 2024 proxec contributors
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Proxy protocol implementations.
-
-pub mod http;
-pub mod local;
-
-pub use http::*;
-pub use local::*;
+//! Local proxy server implementation.
+// TODO: implement in Task 9
