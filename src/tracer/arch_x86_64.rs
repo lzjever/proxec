@@ -40,7 +40,6 @@ pub fn get_return_value(regs: &libc::user_regs_struct) -> i64 {
 
 /// Set syscall return value.
 pub fn set_return_value(
-    pid: Pid,
     regs: &mut libc::user_regs_struct,
     val: i64,
 ) {

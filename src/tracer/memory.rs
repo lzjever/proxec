@@ -5,7 +5,8 @@
 //! Memory operations for reading/writing child process memory.
 
 use crate::error::{Error, Result};
-use nix::sys::uio::{process_vm_readv, process_vm_writev, RemoteIoVec};
+use nix::sys::ptrace;
+use nix::sys::uio::{process_vm_readv, RemoteIoVec};
 use nix::unistd::Pid;
 use std::io::IoSliceMut;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -43,9 +44,9 @@ pub fn read_sockaddr(pid: Pid, addr: u64, _addrlen: u64) -> Result<SocketAddr> {
     }
 }
 
-/// Write a sockaddr structure to child process memory.
+/// Write a sockaddr structure to child process memory using PTRACE_POKEDATA.
 pub fn write_sockaddr(pid: Pid, addr: u64, sockaddr: &SocketAddr) -> Result<()> {
-    let mut buf = [0u8; 28];
+    let mut buf = [0u8; 24]; // sizeof(sockaddr_in6) without leading padding
 
     match sockaddr {
         SocketAddr::V4(v4) => {
@@ -60,14 +61,39 @@ pub fn write_sockaddr(pid: Pid, addr: u64, sockaddr: &SocketAddr) -> Result<()> 
         }
     }
 
-    let local = std::io::IoSlice::new(&buf);
-    let remote = [RemoteIoVec {
-        base: addr as usize,
-        len: 28,
-    }];
+    // Write using PTRACE_POKEDATA (like graftcp does)
+    let word_size = std::mem::size_of::<libc::c_long>();
+    let addr = addr as libc::c_long;
 
-    process_vm_writev(pid, &[local], &remote)
-        .map_err(Error::MemoryWrite)?;
+    // Write full words
+    let num_words = buf.len() / word_size;
+    for i in 0..num_words {
+        let offset = i * word_size;
+        let word_bytes: [u8; 8] = buf[offset..offset + word_size].try_into().unwrap();
+        let word = libc::c_long::from_ne_bytes(word_bytes);
+        unsafe {
+            ptrace::write(pid, (addr + offset as libc::c_long) as *mut libc::c_void, word as *mut libc::c_void)
+                .map_err(Error::Ptrace)?;
+        }
+    }
+
+    // Handle remaining bytes (if any)
+    let remainder = buf.len() % word_size;
+    if remainder != 0 {
+        let offset = num_words * word_size;
+        // Read existing word, modify the relevant bytes, write back
+        let existing = ptrace::read(pid, (addr + offset as libc::c_long) as *mut libc::c_void)
+            .map_err(Error::Ptrace)? as libc::c_long;
+        let mut existing_bytes = existing.to_ne_bytes();
+        for i in 0..remainder {
+            existing_bytes[i] = buf[offset + i];
+        }
+        let new_word = libc::c_long::from_ne_bytes(existing_bytes);
+        unsafe {
+            ptrace::write(pid, (addr + offset as libc::c_long) as *mut libc::c_void, new_word as *mut libc::c_void)
+                .map_err(Error::Ptrace)?;
+        }
+    }
 
     Ok(())
 }

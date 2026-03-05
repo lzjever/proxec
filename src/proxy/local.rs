@@ -18,9 +18,11 @@ pub async fn run(
     tracker: Arc<Mutex<SocketTracker>>,
     proxy_addr: SocketAddr,
 ) -> Result<()> {
+    tracing::info!("Local proxy server started, waiting for connections");
     loop {
+        tracing::debug!("Waiting for connection...");
         let (client, client_addr) = listener.accept().await?;
-        tracing::debug!("Accepted connection from {}", client_addr);
+        tracing::info!("Accepted connection from {}", client_addr);
 
         let tracker = tracker.clone();
         let proxy_addr = proxy_addr.clone();
@@ -78,10 +80,13 @@ async fn handle_client(
 /// Look up destination by finding matching socket in tracker.
 fn lookup_destination(tracker: &Arc<Mutex<SocketTracker>>, _local_port: u16) -> Option<SocketAddr> {
     let tracker = tracker.lock().unwrap();
+    let count = tracker.sockets().count();
+    tracing::debug!("Looking up destination, tracker has {} entries", count);
 
     // For slice 1, we use a simple approach:
     // Just return the first pending destination we find.
-    for (_, info) in tracker.sockets() {
+    for (key, info) in tracker.sockets() {
+        tracing::debug!("Found entry: key={:?}, dest={}", key, info.dest);
         return Some(info.dest);
     }
 
