@@ -299,6 +299,31 @@ fn wait_for_tracee() -> std::result::Result<WaitStatus, nix::errno::Errno> {
     )
 }
 
+fn poll_known_tracees(
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+    active_pids: &mut std::collections::HashSet<i32>,
+) {
+    let pids: Vec<i32> = active_pids.iter().copied().collect();
+    for raw_pid in pids {
+        let pid = Pid::from_raw(raw_pid);
+        match waitpid(
+            pid,
+            Some(WaitPidFlag::__WALL | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOHANG),
+        ) {
+            Ok(WaitStatus::StillAlive) => {}
+            Ok(WaitStatus::Exited(done_pid, _)) | Ok(WaitStatus::Signaled(done_pid, _, _)) => {
+                cleanup_dead_tracee(done_pid, thread_states, tracker, active_pids);
+            }
+            Ok(_) => {}
+            Err(err) if err == nix::errno::Errno::ECHILD || err == nix::errno::Errno::ESRCH => {
+                cleanup_dead_tracee(pid, thread_states, tracker, active_pids);
+            }
+            Err(_) => {}
+        }
+    }
+}
+
 fn resume_tracee(
     pid: Pid,
     sig: Option<Signal>,
@@ -613,6 +638,12 @@ pub fn run(
                     break;
                 }
                 if e == nix::errno::Errno::EINVAL {
+                    poll_known_tracees(&mut thread_states, &tracker, &mut active_pids);
+                    prune_gone_tracees(&mut thread_states, &tracker, &mut active_pids);
+                    if active_pids.is_empty() {
+                        tracing::debug!("All traced processes have exited after EINVAL recovery");
+                        break;
+                    }
                     tracing::warn!(
                         "waitpid returned EINVAL with {} active tracees; retrying",
                         active_pids.len()
