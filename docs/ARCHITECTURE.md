@@ -845,7 +845,7 @@ proxec/
 ├── Cargo.toml
 ├── Makefile
 ├── README.md
-├── COPYING                  # GPL-2.0 license
+├── LICENSE                  # MIT license
 │
 ├── src/
 │   ├── main.rs             # Entry point

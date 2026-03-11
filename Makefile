@@ -43,9 +43,7 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/proxec
 
 dist: release
-	mkdir -p dist
-	tar -czvf dist/proxec-$(shell git describe --tags 2>/dev/null || echo "dev")-$(shell uname -m).tar.gz \
-		-C target/release proxec
+	./scripts/package-release.sh
 
 .PHONY: help
 help:

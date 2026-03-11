@@ -3,11 +3,11 @@ name = "proxec"
 version = "0.1.0"
 edition = "2021"
 authors = ["proxec contributors"]
-license = "GPL-2.0-only"
-description = "Transparently proxy any program through HTTP/SOCKS5"
+license = "MIT"
+description = "Dead-simple Linux-native transparent proxy runner for apps that do not support proxy settings"
 readme = "README.md"
 repository = "https://github.com/proxec/proxec"
-keywords = ["proxy", "transparent", "http", "socks5", "ptrace"]
+keywords = ["proxy", "transparent", "linux", "socks5", "ptrace"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]

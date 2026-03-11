@@ -6,24 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-11
+
 ### Added
-- Initial implementation
+- Dead-simple Linux-native transparent proxying through HTTP CONNECT and SOCKS5
+- `--proxy` based upstream configuration for apps that do not support proxies
+- `--no-proxy` bypass rules for IPs, CIDRs, `localhost`, `*`, and startup-resolved concrete hostnames
+- IPv4 fallback mode via `--disable-ipv6`
+- Release packaging script and GitHub Actions CI/release workflows
 
 ### Changed
 - Ignore system proxy environment variables at runtime and warn when they are present
-- Add `--no-proxy` support for IPs, CIDRs, and startup-resolved concrete hostnames
 - Improve traced socket lookup performance by caching socket inode to destination mappings
+- Rewrite project README and release docs for first public release
 
 ### Fixed
-- Terminate traced process groups on `SIGINT`/`SIGTERM`/`SIGHUP`
+- Terminate traced process groups on `SIGINT`, `SIGTERM`, and `SIGHUP`
 - Exit when the traced process set becomes empty
-- Recover from `waitpid(__WALL)` teardown anomalies such as `EINVAL` by draining residual traced tasks instead of hanging
-
-## [0.1.0] - YYYY-MM-DD
-
-### Added
-- Initial release
-- HTTP CONNECT proxy support
-- SOCKS5 proxy support
-- Standard environment variable support
-- IPv6 support (disabled by default)
+- Recover from ptrace teardown anomalies such as `waitpid(__WALL)` returning `EINVAL`
+- Restrict residual force-drain behavior to abnormal teardown states instead of normal Chromium/Electron startup patterns

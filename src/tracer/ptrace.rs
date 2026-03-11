@@ -1,6 +1,6 @@
 // proxec - Transparent Proxy Executor
 // Copyright (C) 2024 proxec contributors
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: MIT
 
 //! ptrace setup and child process management.
 

@@ -1,76 +1,130 @@
-# proxec - Transparent Proxy Executor
+# proxec
 
-Transparently proxy TCP connections of any program through HTTP/SOCKS5 proxy.
+**Dead simple transparent proxying for Linux apps that were never built for proxies.**
+
+`proxec` is a Linux-native wrapper that intercepts TCP connections and pushes them through an HTTP CONNECT or SOCKS5 proxy without TUN devices, without desktop-wide hacks, and without asking the target app to support proxy settings.
+
+It is the practical answer for apps like:
+
+- `antigravity`
+- Electron / Chromium apps
+- closed-source launchers
+- GUI tools with no proxy UI
+- binaries that ignore `http_proxy`
+
+## Why It Grabs Attention
+
+- **Dead simple**: one binary, one command, no TUN setup
+- **Linux-native**: built around `ptrace` and syscall interception
+- **Perfect TUN replacement for many app-proxying jobs**: no routing tables, no fake system-wide VPN layer, no per-app proxy support required
+- **Works where env vars do not**: targets can be completely unaware of proxies
+- **Built for messy real apps**: handles Electron/Chromium-style process trees and teardown better than toy wrappers
+- **MIT licensed**
+
+## What It Looks Like
+
+```bash
+proxec --proxy socks://127.0.0.1:21089 antigravity
+```
+
+```bash
+proxec --proxy http://127.0.0.1:8080 curl https://example.com
+```
+
+```bash
+proxec \
+  --proxy socks://127.0.0.1:21089 \
+  --no-proxy localhost,127.0.0.1,192.168.0.0/16,jira.internal \
+  --disable-ipv6 \
+  antigravity
+```
+
+## Why Not TUN
+
+TUN mode is powerful, but for this problem it is often the wrong hammer.
+
+With `proxec` you do not need:
+
+- kernel routing changes
+- policy routing rules
+- fake system-wide VPN behavior
+- a full traffic capture stack just to proxy one process
+
+If your real goal is "run this one Linux app through this one proxy", `proxec` is often the cleaner path.
 
 ## Features
 
-- Single binary, no dependencies
-- Explicit upstream proxy via `--proxy`
-- Optional `--no-proxy` bypass rules for loopback/LAN/IP ranges and concrete hostnames
-- IPv6 disabled by default for reliability
-- Silent operation (POSIX compliant)
-- Works with setuid binaries (unlike LD_PRELOAD solutions)
+- transparent TCP proxying through HTTP CONNECT and SOCKS5
+- Linux-native `ptrace`-based interception
+- explicit upstream proxy via `--proxy`
+- `--no-proxy` bypass rules for IPs, CIDRs, `localhost`, `*`, and startup-resolved concrete hostnames
+- optional IPv4-forcing behavior via `--disable-ipv6`
+- process-tree aware tracing for multi-process apps
+- structured shutdown and teardown recovery for complex Chromium/Electron exits
+- no dependency on TUN/TAP, LD_PRELOAD, or desktop proxy support
 
-## Usage
+## Examples
+
+### Proxy a GUI app with no native proxy settings
 
 ```bash
-# SOCKS5 proxy
+proxec --proxy socks://127.0.0.1:21089 antigravity
+```
+
+### Proxy Chromium through SOCKS5
+
+```bash
 proxec --proxy socks://127.0.0.1:1080 chromium
-
-# With authentication
-proxec --proxy http://user:pass@proxy:8080 curl https://ifconfig.me
-
-# Bypass local and LAN targets
-proxec --proxy socks://127.0.0.1:1080 --no-proxy 127.0.0.1,192.168.0.0/16 curl http://192.168.1.10
 ```
 
-## Notes
+### Proxy `curl` through HTTP CONNECT
 
-- `proxec` ignores standard proxy environment variables like `http_proxy` and `all_proxy`.
-- If they are present, `proxec` prints a warning and still uses only `--proxy`.
-- `--no-proxy` supports IPs, CIDR ranges, `localhost`, `*`, and concrete hostnames such as `jira.internal`.
-- Concrete hostnames are resolved once at startup and matched by their resolved IPs.
-- Domain suffix patterns like `.example.com` are not supported yet and trigger a warning.
-- Startup hostname resolution is best-effort: DNS changes, rotating records, and app-specific resolvers can diverge from what `proxec` saw at launch.
-- Closing complex GUI apps such as Electron/Chromium may still create noisy multi-process teardown internally; if ptrace/wait bookkeeping enters an abnormal state during teardown, `proxec` force-drains the residual traced tasks rather than hanging forever.
-
-## Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `PROXEC_IPV6` | Set to "1" to enable IPv6 |
-
-## Options
-
+```bash
+proxec --proxy http://127.0.0.1:8080 curl https://ifconfig.me
 ```
-Usage: proxec [OPTION]... COMMAND [ARG]...
 
-Options:
-  -v, --verbose     verbose operation
-  -q, --quiet       suppress non-error output
-  -d, --debug       debug output
-  -6, --ipv6        enable IPv6 proxying
-  -h, --help        display help and exit
-  -V, --version     output version and exit
+### Keep local and LAN services direct
+
+```bash
+proxec \
+  --proxy socks://127.0.0.1:21089 \
+  --no-proxy localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
+  antigravity
 ```
+
+## Important Behavior
+
+- `proxec` ignores standard proxy environment variables such as `http_proxy`, `https_proxy`, `all_proxy`, and `no_proxy`
+- if those variables are present, `proxec` prints a warning and still uses only `--proxy`
+- concrete hostnames in `--no-proxy` are resolved once at startup and then matched by IP
+- domain suffix patterns like `.example.com` are not supported yet and trigger a warning
+- complex GUI apps can produce noisy multi-process teardown; `proxec` includes recovery logic to avoid hanging forever when ptrace teardown enters an abnormal state
 
 ## Installation
 
 ```bash
-make
-sudo make install
+cargo build --release
+install -Dm755 target/release/proxec /usr/local/bin/proxec
 ```
 
-## Requirements
+## Development
 
-- Linux x86_64 or aarch64
-- Kernel 4.8+ recommended
+```bash
+cargo test
+cargo build --release
+make dist
+```
+
+## Release Artifacts
+
+GitHub Actions is configured to:
+
+- run CI on pushes and pull requests
+- build a Linux release tarball on version tags
+- publish release assets automatically on tag push
+
+See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## License
 
-GPL-2.0-only
-
-## See Also
-
-- [Documentation](docs/)
-- [Contributing](CONTRIBUTING.md)
+MIT. See [LICENSE](LICENSE).
