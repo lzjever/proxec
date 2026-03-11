@@ -200,7 +200,7 @@ This means a normal user action can still trigger transient `waitpid(__WALL, ...
 1. Normal steady state:
    keep tracing all descendants until the traced set becomes empty
 2. Recovery state:
-   if the main tracee has already exited and residual traced tasks stop making progress, or global `waitpid` starts returning `EINVAL`, switch to residual drain mode and force-kill the remaining traced tasks
+   if global `waitpid` starts returning teardown anomalies such as `EINVAL`, switch to residual drain mode and force-kill the remaining traced tasks
 
 This is intentional. In the recovery state, exact per-task ptrace bookkeeping is already degraded, so the correct behavior is to converge quickly and exit rather than hang forever.
 main()

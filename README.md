@@ -32,7 +32,7 @@ proxec --proxy socks://127.0.0.1:1080 --no-proxy 127.0.0.1,192.168.0.0/16 curl h
 - Concrete hostnames are resolved once at startup and matched by their resolved IPs.
 - Domain suffix patterns like `.example.com` are not supported yet and trigger a warning.
 - Startup hostname resolution is best-effort: DNS changes, rotating records, and app-specific resolvers can diverge from what `proxec` saw at launch.
-- Closing complex GUI apps such as Electron/Chromium may still create noisy multi-process teardown internally; `proxec` now force-drains residual traced tasks if shutdown bookkeeping stops making progress, to avoid hanging forever.
+- Closing complex GUI apps such as Electron/Chromium may still create noisy multi-process teardown internally; if ptrace/wait bookkeeping enters an abnormal state during teardown, `proxec` force-drains the residual traced tasks rather than hanging forever.
 
 ## Environment Variables
 
