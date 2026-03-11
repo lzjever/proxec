@@ -193,9 +193,15 @@ no_proxy=localhost,127.0.0.1,::1,.example.com,192.168.0.0/16
 
 Supported formats:
 - Hostname: `localhost`
+- Concrete hostname: `jira.internal` (resolved once at startup)
 - IP address: `127.0.0.1`
-- Domain suffix: `.example.com` (matches `*.example.com`)
+- Domain suffix: `.example.com` (planned, not supported in current implementation)
 - CIDR: `192.168.0.0/16`
+
+Current implementation notes:
+- Concrete hostnames are resolved once when `proxec` starts, then matched by resolved IP.
+- Domain suffix matching is not implemented yet.
+- DNS changes after startup are not reflected until `proxec` is restarted.
 
 ### 4.2 Protocol Selection
 

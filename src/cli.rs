@@ -4,7 +4,7 @@
 
 //! Command-line argument parsing.
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -15,9 +15,21 @@ use clap::Parser;
     long_about = None
 )]
 pub struct Args {
-    /// Proxy URL (e.g., http://127.0.0.1:8080)
+    /// Proxy URL (e.g., http://127.0.0.1:8080 or socks://127.0.0.1:1080)
     #[arg(short = 'x', long = "proxy")]
     pub proxy: String,
+
+    /// Disable IPv6 connections and force applications to fall back to IPv4.
+    #[arg(long = "disable-ipv6")]
+    pub disable_ipv6: bool,
+
+    /// Comma-separated targets that should bypass the proxy.
+    #[arg(long = "no-proxy", value_name = "RULES", value_delimiter = ',', action = ArgAction::Append)]
+    pub no_proxy: Vec<String>,
+
+    /// Deprecated compatibility flag. IPv6 is allowed by default.
+    #[arg(long = "allow-ipv6", hide = true)]
+    pub allow_ipv6_compat: bool,
 
     /// Verbose output
     #[arg(short, long)]

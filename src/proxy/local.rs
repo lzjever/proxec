@@ -5,18 +5,21 @@
 //! Local proxy server for receiving redirected connections.
 
 use crate::error::Result;
+use crate::proxy::config::{ProxyConfig, ProxyProtocol};
 use crate::proxy::http;
-use crate::socket::{SocketKey, SocketTracker};
+use crate::proxy::socks5;
+use crate::socket::{find_inode_by_conn, find_pid_fd_by_inode, SocketTracker};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time::{sleep, Duration};
 
 /// Start the local proxy server.
 pub async fn run(
     listener: TcpListener,
     tracker: Arc<Mutex<SocketTracker>>,
-    proxy_addr: SocketAddr,
+    proxy: ProxyConfig,
 ) -> Result<()> {
     tracing::info!("Local proxy server started, waiting for connections");
     loop {
@@ -25,37 +28,101 @@ pub async fn run(
         tracing::info!("Accepted connection from {}", client_addr);
 
         let tracker = tracker.clone();
-        let proxy_addr = proxy_addr.clone();
+        let proxy = proxy.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(client, client_addr, tracker, proxy_addr).await {
-                tracing::error!("Error handling client {}: {}", client_addr, e);
+            if let Err(e) = handle_client(client, client_addr, tracker, proxy).await {
+                // Don't log "broken pipe" as errors - this is normal when clients disconnect
+                let err_str = e.to_string();
+                if err_str.contains("Broken pipe") || err_str.contains("Connection reset") {
+                    tracing::debug!("Client disconnected: {}", e);
+                } else {
+                    tracing::error!("Error handling client {}: {}", client_addr, e);
+                }
             }
         });
     }
 }
 
 async fn handle_client(
-    mut client: TcpStream,
+    client: TcpStream,
     client_addr: SocketAddr,
     tracker: Arc<Mutex<SocketTracker>>,
-    proxy_addr: SocketAddr,
+    proxy: ProxyConfig,
 ) -> Result<()> {
-    // Look up the destination using the client's local port
-    let dest = lookup_destination(&tracker, client_addr.port());
+    let server_addr = client.local_addr()?;
+    let client_port = client_addr.port();
+
+    let mut dest = None;
+    for attempt in 0..3 {
+        let inode = find_inode_by_conn(
+            client_addr.ip(),
+            client_port,
+            server_addr.ip(),
+            server_addr.port(),
+        );
+        {
+            let tracker_guard = tracker.lock().unwrap();
+            if let Some(inode) = inode {
+                if let Some(info) = tracker_guard.get_by_inode(&inode) {
+                    tracing::debug!(
+                        "Matched connection {} inode={} dest={}",
+                        client_addr, inode, info.dest
+                    );
+                    dest = Some(info.dest);
+                } else if let Some((pid, fd)) = find_pid_fd_by_inode(&inode) {
+                    if let Some(info) = tracker_guard.get_by_pid_fd(pid, fd) {
+                        tracing::debug!(
+                            "Matched connection {} via fallback inode={} pid={} fd={} dest={}",
+                            client_addr, inode, pid, fd, info.dest
+                        );
+                        dest = Some(info.dest);
+                    }
+                }
+            }
+        }
+        if dest.is_some() {
+            break;
+        }
+        if attempt < 2 {
+            sleep(Duration::from_millis(20)).await;
+        }
+    }
 
     let dest = match dest {
-        Some(addr) => addr,
+        Some(dest) => dest,
         None => {
-            tracing::warn!("No destination found for {}", client_addr);
+            let tracker_guard = tracker.lock().unwrap();
+            tracing::warn!(
+                "Could not resolve destination for connection {} (tracker entries={})",
+                client_addr,
+                tracker_guard.stats()
+            );
+            for (pid, info) in tracker_guard.entries().take(5) {
+                tracing::debug!("tracker: pid={} dest={}", pid, info.dest);
+            }
             return Ok(());
         }
     };
 
-    tracing::info!("Proxying {} -> {} via {}", client_addr, dest, proxy_addr);
+    proxy_connection(client, client_addr, proxy, dest).await
+}
 
-    // Connect through the HTTP proxy
-    let mut proxy = match http::connect(proxy_addr, dest, None).await {
+async fn proxy_connection(
+    mut client: TcpStream,
+    client_addr: SocketAddr,
+    proxy: ProxyConfig,
+    dest: SocketAddr,
+) -> Result<()> {
+    tracing::info!("Proxying {} -> {} via {}", client_addr, dest, proxy.addr);
+
+    let auth = proxy.auth.as_ref().map(|(user, pass)| (user.as_str(), pass.as_str()));
+    let upstream = match proxy.protocol {
+        ProxyProtocol::HttpConnect => http::connect(proxy.addr, dest, auth).await,
+        ProxyProtocol::Socks5 => socks5::connect(proxy.addr, dest, auth).await,
+    };
+
+    let mut proxy = match upstream {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to connect to proxy: {}", e);
@@ -70,25 +137,21 @@ async fn handle_client(
     let client_to_proxy = io::copy(&mut client_rd, &mut proxy_wr);
     let proxy_to_client = io::copy(&mut proxy_rd, &mut client_wr);
 
-    tokio::try_join!(client_to_proxy, proxy_to_client)?;
+    // Use tokio::select to handle either direction failing
+    tokio::select! {
+        result = client_to_proxy => {
+            if let Err(e) = result {
+                tracing::debug!("client->proxy copy error: {}", e);
+            }
+        }
+        result = proxy_to_client => {
+            if let Err(e) = result {
+                tracing::debug!("proxy->client copy error: {}", e);
+            }
+        }
+    }
 
     tracing::debug!("Connection closed: {}", client_addr);
 
     Ok(())
-}
-
-/// Look up destination by finding matching socket in tracker.
-fn lookup_destination(tracker: &Arc<Mutex<SocketTracker>>, _local_port: u16) -> Option<SocketAddr> {
-    let tracker = tracker.lock().unwrap();
-    let count = tracker.sockets().count();
-    tracing::debug!("Looking up destination, tracker has {} entries", count);
-
-    // For slice 1, we use a simple approach:
-    // Just return the first pending destination we find.
-    for (key, info) in tracker.sockets() {
-        tracing::debug!("Found entry: key={:?}, dest={}", key, info.dest);
-        return Some(info.dest);
-    }
-
-    None
 }

@@ -5,7 +5,9 @@
 //! Transparently proxy TCP connections through HTTP/SOCKS5.
 
 pub mod cli;
+pub mod env;
 pub mod error;
+pub mod no_proxy;
 pub mod proxy;
 pub mod socket;
 pub mod tracer;

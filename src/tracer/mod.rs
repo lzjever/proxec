@@ -7,9 +7,12 @@
 mod arch_x86_64;
 mod memory;
 mod ptrace;
-mod syscall;
+mod seccomp;
+mod trace_loop;
 
 pub use arch_x86_64::*;
 pub use memory::*;
 pub use ptrace::*;
-pub use syscall::*;
+pub use seccomp::*;
+pub use trace_loop::*;
+pub use ptrace::get_ptrace_event_msg;

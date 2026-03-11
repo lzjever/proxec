@@ -5,7 +5,8 @@ Transparently proxy TCP connections of any program through HTTP/SOCKS5 proxy.
 ## Features
 
 - Single binary, no dependencies
-- Uses standard environment variables (`http_proxy`, `all_proxy`, etc.)
+- Explicit upstream proxy via `--proxy`
+- Optional `--no-proxy` bypass rules for loopback/LAN/IP ranges and concrete hostnames
 - IPv6 disabled by default for reliability
 - Silent operation (POSIX compliant)
 - Works with setuid binaries (unlike LD_PRELOAD solutions)
@@ -13,29 +14,29 @@ Transparently proxy TCP connections of any program through HTTP/SOCKS5 proxy.
 ## Usage
 
 ```bash
-# Set proxy via environment variables (standard Unix way)
-export http_proxy=http://192.168.1.1:8080
-export https_proxy=http://192.168.1.1:8080
-proxec curl https://example.com
-
-# Or inline
-http_proxy=http://proxy:8080 proxec wget https://example.com
-
 # SOCKS5 proxy
-all_proxy=socks5://127.0.0.1:1080 proxec chromium
+proxec --proxy socks://127.0.0.1:1080 chromium
 
 # With authentication
-http_proxy=http://user:pass@proxy:8080 proxec curl https://ifconfig.me
+proxec --proxy http://user:pass@proxy:8080 curl https://ifconfig.me
+
+# Bypass local and LAN targets
+proxec --proxy socks://127.0.0.1:1080 --no-proxy 127.0.0.1,192.168.0.0/16 curl http://192.168.1.10
 ```
+
+## Notes
+
+- `proxec` ignores standard proxy environment variables like `http_proxy` and `all_proxy`.
+- If they are present, `proxec` prints a warning and still uses only `--proxy`.
+- `--no-proxy` supports IPs, CIDR ranges, `localhost`, `*`, and concrete hostnames such as `jira.internal`.
+- Concrete hostnames are resolved once at startup and matched by their resolved IPs.
+- Domain suffix patterns like `.example.com` are not supported yet and trigger a warning.
+- Startup hostname resolution is best-effort: DNS changes, rotating records, and app-specific resolvers can diverge from what `proxec` saw at launch.
 
 ## Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `http_proxy` / `HTTP_PROXY` | Proxy for HTTP |
-| `https_proxy` / `HTTPS_PROXY` | Proxy for HTTPS |
-| `all_proxy` / `ALL_PROXY` | Proxy for all protocols |
-| `no_proxy` / `NO_PROXY` | Bypass list |
 | `PROXEC_IPV6` | Set to "1" to enable IPv6 |
 
 ## Options

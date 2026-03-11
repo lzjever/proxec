@@ -43,6 +43,9 @@ pub enum Error {
     #[error("HTTP proxy error: {0}")]
     HttpProxy(String),
 
+    #[error("SOCKS5 proxy error: {0}")]
+    SocksProxy(String),
+
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
 

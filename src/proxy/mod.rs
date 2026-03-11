@@ -4,8 +4,10 @@
 
 //! Proxy protocol implementations.
 
+pub mod config;
 pub mod http;
 pub mod local;
+pub mod socks5;
 
-pub use http::*;
+pub use config::*;
 pub use local::*;
