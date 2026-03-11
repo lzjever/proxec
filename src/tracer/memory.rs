@@ -90,9 +90,7 @@ pub fn write_sockaddr(pid: Pid, addr: u64, sockaddr: &SocketAddr) -> Result<()> 
         let existing = ptrace::read(pid, (addr + offset as libc::c_long) as *mut libc::c_void)
             .map_err(Error::Ptrace)? as libc::c_long;
         let mut existing_bytes = existing.to_ne_bytes();
-        for i in 0..remainder {
-            existing_bytes[i] = buf[offset + i];
-        }
+        existing_bytes[..remainder].copy_from_slice(&buf[offset..(remainder + offset)]);
         let new_word = libc::c_long::from_ne_bytes(existing_bytes);
         unsafe {
             ptrace::write(

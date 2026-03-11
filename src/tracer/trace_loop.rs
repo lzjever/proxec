@@ -464,7 +464,7 @@ pub fn run(
                     // Without PTRACE_O_TRACESECCOMP, seccomp events won't be reported
                     setup_ptrace_options(pid, use_seccomp);
                 }
-                if event == libc::PTRACE_EVENT_SECCOMP as i32 {
+                if event == libc::PTRACE_EVENT_SECCOMP {
                     let state = thread_states.entry(pid.as_raw()).or_default();
                     if let Err(err) = handle_syscall_enter(
                         pid,
@@ -490,9 +490,9 @@ pub fn run(
                         return Err(err);
                     }
                     state.phase = SyscallPhase::Exiting;
-                } else if event == libc::PTRACE_EVENT_FORK as i32
-                    || event == libc::PTRACE_EVENT_VFORK as i32
-                    || event == libc::PTRACE_EVENT_CLONE as i32
+                } else if event == libc::PTRACE_EVENT_FORK
+                    || event == libc::PTRACE_EVENT_VFORK
+                    || event == libc::PTRACE_EVENT_CLONE
                 {
                     // Other ptrace events (EXEC, CLONE, FORK, VFORK)
                     // For clone/fork events, get the new child PID and set options for it too
@@ -720,6 +720,7 @@ pub fn run(
 }
 
 /// Handle syscall in PTRACE_SYSCALL mode (need to track enter/exit state).
+#[allow(clippy::too_many_arguments)]
 fn handle_syscall_ptrace(
     pid: Pid,
     state: &mut ThreadState,
@@ -755,6 +756,7 @@ fn handle_syscall_ptrace(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_syscall_enter(
     pid: Pid,
     regs: &libc::user_regs_struct,
@@ -821,6 +823,7 @@ fn handle_syscall_exit(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_connect_enter(
     pid: Pid,
     regs: &libc::user_regs_struct,
@@ -1024,7 +1027,7 @@ fn handle_clone_enter(pid: Pid, regs: &libc::user_regs_struct) -> Result<()> {
 
         // Modify the flags argument
         let mut regs = *regs;
-        set_syscall_arg(&mut regs, 0, new_flags as u64);
+        set_syscall_arg(&mut regs, 0, new_flags);
         set_regs(pid, &regs).map_err(|e| {
             tracing::warn!("Failed to set registers for pid {pid}: {}", e);
             Error::Ptrace(nix::errno::Errno::last())
