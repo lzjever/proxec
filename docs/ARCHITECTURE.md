@@ -184,6 +184,25 @@ impl NoProxyPattern {
 ### 3.1 Program Startup
 
 ```
+
+### 3.4 Multi-Process Teardown and Recovery
+
+For Electron/Chromium-style applications, "normal" window close can still produce a noisy ptrace teardown:
+
+- the original browser process may exit before utility, renderer, GPU, or crashpad descendants
+- many traced threads can exit concurrently while others are still stopped in ptrace/seccomp states
+- the tracer's in-memory `active_pids` view can temporarily diverge from the kernel's waitable task set
+
+This means a normal user action can still trigger transient `waitpid(__WALL, ...)` anomalies during shutdown.
+
+`proxec` therefore uses a two-stage teardown policy:
+
+1. Normal steady state:
+   keep tracing all descendants until the traced set becomes empty
+2. Recovery state:
+   if the main tracee has already exited and residual traced tasks stop making progress, or global `waitpid` starts returning `EINVAL`, switch to residual drain mode and force-kill the remaining traced tasks
+
+This is intentional. In the recovery state, exact per-task ptrace bookkeeping is already degraded, so the correct behavior is to converge quickly and exit rather than hang forever.
 main()
   │
   ├── 1. Parse command-line arguments

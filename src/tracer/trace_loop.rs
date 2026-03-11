@@ -82,6 +82,14 @@ struct ShutdownState {
     escalated: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ResidualDrainState {
+    main_exited_at: Instant,
+    last_progress_at: Instant,
+    last_active_count: usize,
+    forced: bool,
+}
+
 extern "C" fn handle_shutdown_signal(sig: i32) {
     if SHUTDOWN_SIGNAL.load(Ordering::SeqCst) == 0 {
         SHUTDOWN_SIGNAL.store(sig, Ordering::SeqCst);
@@ -231,6 +239,48 @@ fn update_shutdown_state(
     }
 }
 
+fn update_residual_drain_state(
+    residual: &mut Option<ResidualDrainState>,
+    main_exited: bool,
+    active_pids: &mut std::collections::HashSet<i32>,
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+) {
+    if !main_exited || active_pids.is_empty() {
+        *residual = None;
+        return;
+    }
+
+    let now = Instant::now();
+    let active_count = active_pids.len();
+    let state = residual.get_or_insert(ResidualDrainState {
+        main_exited_at: now,
+        last_progress_at: now,
+        last_active_count: active_count,
+        forced: false,
+    });
+
+    if active_count < state.last_active_count {
+        state.last_progress_at = now;
+        state.last_active_count = active_count;
+        return;
+    }
+
+    if !state.forced
+        && state.main_exited_at.elapsed() >= Duration::from_secs(3)
+        && state.last_progress_at.elapsed() >= Duration::from_secs(1)
+    {
+        tracing::warn!(
+            "Main tracee exited {}s ago and {} residual tracees made no progress; force-draining leftovers",
+            state.main_exited_at.elapsed().as_secs(),
+            active_count
+        );
+        kill_active_tracees(active_pids, thread_states, tracker);
+        state.forced = true;
+        state.last_progress_at = now;
+    }
+}
+
 fn ptrace_options(use_seccomp: bool) -> ptrace::Options {
     let mut options = ptrace::Options::PTRACE_O_TRACECLONE
         | ptrace::Options::PTRACE_O_TRACEEXEC
@@ -371,6 +421,8 @@ pub fn run(
     let mut thread_states: std::collections::HashMap<i32, ThreadState> = std::collections::HashMap::new();
     let mut stats = TraceStats::default();
     let mut shutdown: Option<ShutdownState> = None;
+    let mut main_exited = false;
+    let mut residual_drain: Option<ResidualDrainState> = None;
     let process_group = child_pid;
     // Track all active traced processes
     let mut active_pids: std::collections::HashSet<i32> = std::collections::HashSet::new();
@@ -402,14 +454,28 @@ pub fn run(
             &tracker,
             use_seccomp,
         );
+        update_residual_drain_state(
+            &mut residual_drain,
+            main_exited,
+            &mut active_pids,
+            &mut thread_states,
+            &tracker,
+        );
         // Wait for any traced task, including clone()-created threads.
         match wait_for_tracee() {
             Ok(WaitStatus::Exited(pid, code)) => {
                 tracing::debug!("Process {pid} exited with code {code}");
                 cleanup_dead_tracee(pid, &mut thread_states, &tracker, &mut active_pids);
+                if !active_pids.is_empty() {
+                    if let Some(state) = residual_drain.as_mut() {
+                        state.last_progress_at = Instant::now();
+                        state.last_active_count = active_pids.len();
+                    }
+                }
 
                 if pid == child_pid {
                     exit_code = code;
+                    main_exited = true;
                     // Don't break! Continue tracing other descendants
                     tracing::debug!("Main process exited, but continuing to trace {} remaining processes", active_pids.len());
                 }
@@ -423,9 +489,16 @@ pub fn run(
             Ok(WaitStatus::Signaled(pid, sig, _)) => {
                 tracing::debug!("Process {pid} killed by signal {sig}");
                 cleanup_dead_tracee(pid, &mut thread_states, &tracker, &mut active_pids);
+                if !active_pids.is_empty() {
+                    if let Some(state) = residual_drain.as_mut() {
+                        state.last_progress_at = Instant::now();
+                        state.last_active_count = active_pids.len();
+                    }
+                }
 
                 if pid == child_pid {
                     exit_code = 128 + sig as i32;
+                    main_exited = true;
                     tracing::debug!("Main process killed, but continuing to trace {} remaining processes", active_pids.len());
                 }
 
@@ -643,6 +716,19 @@ pub fn run(
                     if active_pids.is_empty() {
                         tracing::debug!("All traced processes have exited after EINVAL recovery");
                         break;
+                    }
+                    if main_exited {
+                        tracing::warn!(
+                            "Main tracee has exited but waitpid still returned EINVAL with {} residual tracees; force-draining leftovers",
+                            active_pids.len()
+                        );
+                        kill_active_tracees(&mut active_pids, &mut thread_states, &tracker);
+                        poll_known_tracees(&mut thread_states, &tracker, &mut active_pids);
+                        prune_gone_tracees(&mut thread_states, &tracker, &mut active_pids);
+                        if active_pids.is_empty() {
+                            tracing::debug!("All residual tracees were drained after EINVAL recovery");
+                            break;
+                        }
                     }
                     tracing::warn!(
                         "waitpid returned EINVAL with {} active tracees; retrying",
