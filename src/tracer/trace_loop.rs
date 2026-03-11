@@ -268,6 +268,22 @@ fn cleanup_dead_tracee(
     active_pids.remove(&pid.as_raw());
 }
 
+fn prune_gone_tracees(
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+    active_pids: &mut std::collections::HashSet<i32>,
+) {
+    let gone: Vec<i32> = active_pids
+        .iter()
+        .copied()
+        .filter(|pid| std::fs::metadata(format!("/proc/{pid}")).is_err())
+        .collect();
+
+    for raw_pid in gone {
+        cleanup_dead_tracee(Pid::from_raw(raw_pid), thread_states, tracker, active_pids);
+    }
+}
+
 fn is_esrch_io(err: &std::io::Error) -> bool {
     err.raw_os_error() == Some(libc::ESRCH)
 }
@@ -347,6 +363,11 @@ pub fn run(
     let mut exit_code = 0;
 
     loop {
+        prune_gone_tracees(&mut thread_states, &tracker, &mut active_pids);
+        if active_pids.is_empty() {
+            tracing::debug!("All traced processes have exited");
+            break;
+        }
         update_shutdown_state(
             &mut shutdown,
             process_group,
@@ -572,6 +593,10 @@ pub fn run(
             }
             Err(e) => {
                 if e == nix::errno::Errno::EINTR {
+                    prune_gone_tracees(&mut thread_states, &tracker, &mut active_pids);
+                    if active_pids.is_empty() {
+                        break;
+                    }
                     update_shutdown_state(
                         &mut shutdown,
                         process_group,

@@ -76,6 +76,19 @@ fn test_no_proxy_invalid_cidr() {
 }
 
 #[test]
+fn test_proxec_exits_when_traced_program_exits() {
+    Command::cargo_bin("proxec")
+        .unwrap()
+        .arg("--proxy")
+        .arg("socks://127.0.0.1:1080")
+        .arg("sh")
+        .arg("-c")
+        .arg("exit 0")
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_sigint_terminates_traced_process_group() {
     let marker = format!("proxec-shutdown-test-{}", std::process::id());
     let proxec_bin = assert_cmd::cargo::cargo_bin("proxec");
@@ -101,7 +114,7 @@ fn test_sigint_terminates_traced_process_group() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    assert_eq!(output.status.code(), Some(128 + libc::SIGTERM));
+    assert_eq!(output.status.code(), Some(128 + libc::SIGINT));
     assert!(combined.contains("terminating traced process group"));
 
     thread::sleep(Duration::from_millis(300));
