@@ -13,10 +13,17 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use predicates::prelude::*;
 
+fn proxec_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_proxec")
+}
+
+fn proxec_cmd() -> Command {
+    Command::from_std(StdCommand::new(proxec_bin()))
+}
+
 #[test]
 fn test_help_flag() {
-    Command::cargo_bin("proxec")
-        .unwrap()
+    proxec_cmd()
         .arg("--help")
         .assert()
         .success()
@@ -27,8 +34,7 @@ fn test_help_flag() {
 
 #[test]
 fn test_version_flag() {
-    Command::cargo_bin("proxec")
-        .unwrap()
+    proxec_cmd()
         .arg("--version")
         .assert()
         .success()
@@ -37,8 +43,7 @@ fn test_version_flag() {
 
 #[test]
 fn test_missing_proxy() {
-    Command::cargo_bin("proxec")
-        .unwrap()
+    proxec_cmd()
         .arg("echo")
         .arg("hello")
         .assert()
@@ -47,8 +52,7 @@ fn test_missing_proxy() {
 
 #[test]
 fn test_proxy_env_vars_are_ignored_with_warning() {
-    Command::cargo_bin("proxec")
-        .unwrap()
+    proxec_cmd()
         .env("http_proxy", "http://127.0.0.1:9999")
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")
@@ -64,8 +68,7 @@ fn test_proxy_env_vars_are_ignored_with_warning() {
 
 #[test]
 fn test_no_proxy_invalid_cidr() {
-    Command::cargo_bin("proxec")
-        .unwrap()
+    proxec_cmd()
         .arg("--proxy")
         .arg("socks://127.0.0.1:1080")
         .arg("--no-proxy")
@@ -77,8 +80,7 @@ fn test_no_proxy_invalid_cidr() {
 
 #[test]
 fn test_proxec_exits_when_traced_program_exits() {
-    Command::cargo_bin("proxec")
-        .unwrap()
+    proxec_cmd()
         .arg("--proxy")
         .arg("socks://127.0.0.1:1080")
         .arg("sh")
@@ -91,8 +93,7 @@ fn test_proxec_exits_when_traced_program_exits() {
 #[test]
 fn test_sigint_terminates_traced_process_group() {
     let marker = format!("proxec-shutdown-test-{}", std::process::id());
-    let proxec_bin = assert_cmd::cargo::cargo_bin("proxec");
-    let child = StdCommand::new(proxec_bin)
+    let child = StdCommand::new(proxec_bin())
         .arg("--proxy")
         .arg("socks://127.0.0.1:1080")
         .arg("python3")
