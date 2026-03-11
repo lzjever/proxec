@@ -50,8 +50,7 @@ pub fn fork_exec(command: &str, args: &[String], use_seccomp: bool) -> Result<Pi
             ptrace::traceme().expect("ptrace TRACEME failed");
 
             // Stop ourselves so parent can set options
-            nix::sys::signal::raise(nix::sys::signal::SIGSTOP)
-                .expect("raise SIGSTOP failed");
+            nix::sys::signal::raise(nix::sys::signal::SIGSTOP).expect("raise SIGSTOP failed");
 
             if use_seccomp {
                 if let Err(err) = seccomp::install_filter() {
@@ -68,7 +67,7 @@ pub fn fork_exec(command: &str, args: &[String], use_seccomp: bool) -> Result<Pi
 
             // Exec the target program
             let _ = nix::unistd::execvp(&c_cmd, &c_args);
-            
+
             // If execvp returns, it failed
             eprintln!("proxec: execvp failed: {}", std::io::Error::last_os_error());
             std::process::exit(127);

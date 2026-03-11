@@ -139,7 +139,8 @@ impl SocketTracker {
             keep
         });
         self.stream_fds.retain(|(p, _)| *p != tgid);
-        self.tid_to_tgid.retain(|_, mapped_tgid| *mapped_tgid != tgid);
+        self.tid_to_tgid
+            .retain(|_, mapped_tgid| *mapped_tgid != tgid);
     }
 
     pub fn stats(&self) -> usize {

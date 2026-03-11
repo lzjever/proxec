@@ -62,8 +62,8 @@ impl Error {
         match self {
             Self::NoProxy => 0,
             Self::InvalidProxyUrl(_) => 2,
-            Self::ProxyConnect(_) => 69,  // EX_UNAVAILABLE
-            Self::Ptrace(_) => 77,        // EX_NOPERM
+            Self::ProxyConnect(_) => 69, // EX_UNAVAILABLE
+            Self::Ptrace(_) => 77,       // EX_NOPERM
             Self::Exec(_) => 126,
             _ => 1,
         }

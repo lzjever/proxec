@@ -21,8 +21,7 @@ pub fn read_sockaddr(pid: Pid, addr: u64, _addrlen: u64) -> Result<SocketAddr> {
         len: 28,
     }];
 
-    process_vm_readv(pid, &mut [local], &remote)
-        .map_err(Error::MemoryRead)?;
+    process_vm_readv(pid, &mut [local], &remote).map_err(Error::MemoryRead)?;
 
     // Parse address family (first 2 bytes)
     let family = u16::from_ne_bytes([buf[0], buf[1]]);
@@ -74,8 +73,12 @@ pub fn write_sockaddr(pid: Pid, addr: u64, sockaddr: &SocketAddr) -> Result<()> 
         let word_bytes: [u8; 8] = buf[offset..offset + word_size].try_into().unwrap();
         let word = libc::c_long::from_ne_bytes(word_bytes);
         unsafe {
-            ptrace::write(pid, (addr + offset as libc::c_long) as *mut libc::c_void, word as *mut libc::c_void)
-                .map_err(Error::Ptrace)?;
+            ptrace::write(
+                pid,
+                (addr + offset as libc::c_long) as *mut libc::c_void,
+                word as *mut libc::c_void,
+            )
+            .map_err(Error::Ptrace)?;
         }
     }
 
@@ -92,8 +95,12 @@ pub fn write_sockaddr(pid: Pid, addr: u64, sockaddr: &SocketAddr) -> Result<()> 
         }
         let new_word = libc::c_long::from_ne_bytes(existing_bytes);
         unsafe {
-            ptrace::write(pid, (addr + offset as libc::c_long) as *mut libc::c_void, new_word as *mut libc::c_void)
-                .map_err(Error::Ptrace)?;
+            ptrace::write(
+                pid,
+                (addr + offset as libc::c_long) as *mut libc::c_void,
+                new_word as *mut libc::c_void,
+            )
+            .map_err(Error::Ptrace)?;
         }
     }
 
@@ -110,8 +117,7 @@ pub fn read_u64(pid: Pid, addr: u64) -> Result<u64> {
         len,
     }];
 
-    process_vm_readv(pid, &mut [local], &remote)
-        .map_err(Error::MemoryRead)?;
+    process_vm_readv(pid, &mut [local], &remote).map_err(Error::MemoryRead)?;
 
     Ok(u64::from_ne_bytes(buf))
 }

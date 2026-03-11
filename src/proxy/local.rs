@@ -67,14 +67,20 @@ async fn handle_client(
                 if let Some(info) = tracker_guard.get_by_inode(&inode) {
                     tracing::debug!(
                         "Matched connection {} inode={} dest={}",
-                        client_addr, inode, info.dest
+                        client_addr,
+                        inode,
+                        info.dest
                     );
                     dest = Some(info.dest);
                 } else if let Some((pid, fd)) = find_pid_fd_by_inode(&inode) {
                     if let Some(info) = tracker_guard.get_by_pid_fd(pid, fd) {
                         tracing::debug!(
                             "Matched connection {} via fallback inode={} pid={} fd={} dest={}",
-                            client_addr, inode, pid, fd, info.dest
+                            client_addr,
+                            inode,
+                            pid,
+                            fd,
+                            info.dest
                         );
                         dest = Some(info.dest);
                     }
@@ -116,7 +122,10 @@ async fn proxy_connection(
 ) -> Result<()> {
     tracing::info!("Proxying {} -> {} via {}", client_addr, dest, proxy.addr);
 
-    let auth = proxy.auth.as_ref().map(|(user, pass)| (user.as_str(), pass.as_str()));
+    let auth = proxy
+        .auth
+        .as_ref()
+        .map(|(user, pass)| (user.as_str(), pass.as_str()));
     let upstream = match proxy.protocol {
         ProxyProtocol::HttpConnect => http::connect(proxy.addr, dest, auth).await,
         ProxyProtocol::Socks5 => socks5::connect(proxy.addr, dest, auth).await,

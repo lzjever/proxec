@@ -13,11 +13,11 @@
 use crate::error::{Error, Result};
 use crate::no_proxy::NoProxy;
 use crate::socket::{probe_socket_is_stream, read_socket_inode, SocketInfo, SocketTracker};
+use crate::tracer::arch_x86_64::syscall::{CLONE, CLONE3, CLOSE, CONNECT, SOCKET};
 use crate::tracer::{
     get_ptrace_event_msg, get_regs, get_return_value, get_syscall_arg, get_syscall_nr, set_regs,
     set_return_value, set_syscall_arg, write_sockaddr,
 };
-use crate::tracer::arch_x86_64::syscall::{CLONE, CLONE3, CLOSE, CONNECT, SOCKET};
 use nix::sys::ptrace;
 use nix::sys::signal::{self, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -175,7 +175,13 @@ fn begin_shutdown(
         pgid
     );
     let _ = signal::killpg(pgid, Signal::SIGTERM);
-    terminate_active_tracees(active_pids, thread_states, tracker, use_seccomp, Signal::SIGTERM);
+    terminate_active_tracees(
+        active_pids,
+        thread_states,
+        tracker,
+        use_seccomp,
+        Signal::SIGTERM,
+    );
 }
 
 fn escalate_shutdown(
@@ -184,7 +190,10 @@ fn escalate_shutdown(
     thread_states: &mut std::collections::HashMap<i32, ThreadState>,
     tracker: &Arc<Mutex<SocketTracker>>,
 ) {
-    tracing::warn!("Shutdown timeout exceeded; force-killing process group {}", pgid);
+    tracing::warn!(
+        "Shutdown timeout exceeded; force-killing process group {}",
+        pgid
+    );
     let _ = signal::killpg(pgid, Signal::SIGKILL);
     kill_active_tracees(active_pids, thread_states, tracker);
 }
@@ -224,7 +233,8 @@ fn update_shutdown_state(
         return;
     };
     if !state.escalated
-        && (SHUTDOWN_COUNT.load(Ordering::SeqCst) > 1 || state.started_at.elapsed() >= Duration::from_secs(2))
+        && (SHUTDOWN_COUNT.load(Ordering::SeqCst) > 1
+            || state.started_at.elapsed() >= Duration::from_secs(2))
     {
         escalate_shutdown(pgid, active_pids, thread_states, tracker);
         state.escalated = true;
@@ -368,7 +378,8 @@ pub fn run(
     use_seccomp: bool,
 ) -> Result<i32> {
     install_shutdown_handlers()?;
-    let mut thread_states: std::collections::HashMap<i32, ThreadState> = std::collections::HashMap::new();
+    let mut thread_states: std::collections::HashMap<i32, ThreadState> =
+        std::collections::HashMap::new();
     let mut stats = TraceStats::default();
     let mut shutdown: Option<ShutdownState> = None;
     let mut main_exited = false;
@@ -413,7 +424,10 @@ pub fn run(
                     exit_code = code;
                     main_exited = true;
                     // Don't break! Continue tracing other descendants
-                    tracing::debug!("Main process exited, but continuing to trace {} remaining processes", active_pids.len());
+                    tracing::debug!(
+                        "Main process exited, but continuing to trace {} remaining processes",
+                        active_pids.len()
+                    );
                 }
 
                 // Check if all processes have exited
@@ -429,7 +443,10 @@ pub fn run(
                 if pid == child_pid {
                     exit_code = 128 + sig as i32;
                     main_exited = true;
-                    tracing::debug!("Main process killed, but continuing to trace {} remaining processes", active_pids.len());
+                    tracing::debug!(
+                        "Main process killed, but continuing to trace {} remaining processes",
+                        active_pids.len()
+                    );
                 }
 
                 if active_pids.is_empty() {
@@ -462,7 +479,12 @@ pub fn run(
                     ) {
                         if matches!(&err, Error::Io(io_err) if is_esrch_io(io_err)) {
                             tracing::debug!("Tracee {pid} disappeared during seccomp handling");
-                            cleanup_dead_tracee(pid, &mut thread_states, &tracker, &mut active_pids);
+                            cleanup_dead_tracee(
+                                pid,
+                                &mut thread_states,
+                                &tracker,
+                                &mut active_pids,
+                            );
                             continue;
                         }
                         return Err(err);
@@ -478,7 +500,9 @@ pub fn run(
                     let child_pid = get_ptrace_event_msg(pid)?;
                     let child_pid = Pid::from_raw(child_pid as i32);
                     if !active_pids.contains(&child_pid.as_raw()) {
-                        tracing::info!("New child process from fork/clone: {child_pid} (parent={pid})");
+                        tracing::info!(
+                            "New child process from fork/clone: {child_pid} (parent={pid})"
+                        );
                         active_pids.insert(child_pid.as_raw());
                         // The child will get a SIGSTOP, we'll set options then
                     }
@@ -500,9 +524,7 @@ pub fn run(
                     active_pids.insert(pid.as_raw());
                 }
 
-                let state = thread_states
-                    .entry(pid.as_raw())
-                    .or_default();
+                let state = thread_states.entry(pid.as_raw()).or_default();
                 if let Err(err) = handle_syscall_ptrace(
                     pid,
                     state,
@@ -541,10 +563,7 @@ pub fn run(
                 // With seccomp, children inherit the filter automatically
                 if is_new || pid == child_pid {
                     tracing::debug!("Setting ptrace options for pid {pid}");
-                    if let Err(e) = ptrace::setoptions(
-                        pid,
-                        ptrace_options(use_seccomp),
-                    ) {
+                    if let Err(e) = ptrace::setoptions(pid, ptrace_options(use_seccomp)) {
                         tracing::warn!("Failed to set ptrace options for pid {pid}: {e}");
                     }
                 }
@@ -656,7 +675,9 @@ pub fn run(
                         poll_known_tracees(&mut thread_states, &tracker, &mut active_pids);
                         prune_gone_tracees(&mut thread_states, &tracker, &mut active_pids);
                         if active_pids.is_empty() {
-                            tracing::debug!("All residual tracees were drained after EINVAL recovery");
+                            tracing::debug!(
+                                "All residual tracees were drained after EINVAL recovery"
+                            );
                             break;
                         }
                     }
@@ -712,7 +733,17 @@ fn handle_syscall_ptrace(
     let regs = get_regs(pid)?;
     match state.phase {
         SyscallPhase::Entering => {
-            handle_syscall_enter(pid, &regs, tracker, local_addr, proxy_addr, no_proxy, disable_ipv6, state, stats)?;
+            handle_syscall_enter(
+                pid,
+                &regs,
+                tracker,
+                local_addr,
+                proxy_addr,
+                no_proxy,
+                disable_ipv6,
+                state,
+                stats,
+            )?;
             state.phase = SyscallPhase::Exiting;
         }
         SyscallPhase::Exiting => {
@@ -741,7 +772,17 @@ fn handle_syscall_enter(
             handle_socket_enter(pid, regs, tracker, stats)?;
         }
         CONNECT => {
-            handle_connect_enter(pid, regs, tracker, local_addr, proxy_addr, no_proxy, disable_ipv6, state, stats)?;
+            handle_connect_enter(
+                pid,
+                regs,
+                tracker,
+                local_addr,
+                proxy_addr,
+                no_proxy,
+                disable_ipv6,
+                state,
+                stats,
+            )?;
         }
         CLOSE => {
             handle_close_enter(pid, regs, tracker)?;
@@ -821,7 +862,9 @@ fn handle_connect_enter(
     }
     if dest.ip().is_unspecified() {
         stats.connect_unspecified_skipped += 1;
-        tracing::trace!("Skipping unspecified connect target (pid={pid}, fd={sockfd}, dest={dest})");
+        tracing::trace!(
+            "Skipping unspecified connect target (pid={pid}, fd={sockfd}, dest={dest})"
+        );
         return Ok(());
     }
     if dest.port() == 0 {
@@ -830,13 +873,17 @@ fn handle_connect_enter(
         return Ok(());
     }
     if no_proxy.should_bypass(&dest) {
-        tracing::debug!("Bypassing proxy due to --no-proxy rule (pid={pid}, fd={sockfd}, dest={dest})");
+        tracing::debug!(
+            "Bypassing proxy due to --no-proxy rule (pid={pid}, fd={sockfd}, dest={dest})"
+        );
         return Ok(());
     }
     if matches!(dest, SocketAddr::V6(_)) && disable_ipv6 {
         stats.connect_ipv6_blocked += 1;
         state.forced_connect_errno = Some(libc::EAFNOSUPPORT);
-        tracing::debug!("Blocked IPv6 connect to force IPv4 fallback (pid={pid}, fd={sockfd}, dest={dest})");
+        tracing::debug!(
+            "Blocked IPv6 connect to force IPv4 fallback (pid={pid}, fd={sockfd}, dest={dest})"
+        );
         return Ok(());
     }
 
@@ -851,11 +898,15 @@ fn handle_connect_enter(
                 let mut tracker_guard = tracker.lock().unwrap();
                 tracker_guard.mark_stream_socket_fd(pid, sockfd);
                 drop(tracker_guard);
-                tracing::debug!("Recovered stream socket via fd probe (pid={pid}, fd={sockfd}, dest={dest})");
+                tracing::debug!(
+                    "Recovered stream socket via fd probe (pid={pid}, fd={sockfd}, dest={dest})"
+                );
             }
             Ok(false) => {
                 stats.connect_non_stream_skipped += 1;
-                tracing::debug!("Skipping non-stream socket connect (pid={pid}, fd={sockfd}, dest={dest})");
+                tracing::debug!(
+                    "Skipping non-stream socket connect (pid={pid}, fd={sockfd}, dest={dest})"
+                );
                 return Ok(());
             }
             Err(err) => {
@@ -873,7 +924,9 @@ fn handle_connect_enter(
         return Ok(());
     }
 
-    tracing::debug!("Preparing to rewrite connect (pid={pid}, fd={sockfd}, dest={dest}, local={local_addr})");
+    tracing::debug!(
+        "Preparing to rewrite connect (pid={pid}, fd={sockfd}, dest={dest}, local={local_addr})"
+    );
 
     // Store the original destination keyed by socket inode (primary) and PID (fallback).
     let info = SocketInfo { dest };
@@ -888,7 +941,9 @@ fn handle_connect_enter(
     // Rewrite the address to point to our local proxy
     match write_sockaddr(pid, addr_ptr, local_addr) {
         Ok(()) => {
-            tracing::debug!("Rewrote sockaddr in tracee memory (pid={pid}, fd={sockfd}, local={local_addr})");
+            tracing::debug!(
+                "Rewrote sockaddr in tracee memory (pid={pid}, fd={sockfd}, local={local_addr})"
+            );
         }
         Err(err) => {
             tracing::error!(
@@ -939,7 +994,6 @@ fn handle_close_enter(
     Ok(())
 }
 
-
 /// Handle clone() syscall - remove CLONE_UNTRACED flag to ensure child is traced.
 ///
 /// This is crucial for programs like Electron/Chromium that use CLONE_UNTRACED
@@ -964,7 +1018,8 @@ fn handle_clone_enter(pid: Pid, regs: &libc::user_regs_struct) -> Result<()> {
         let new_flags = flags & !CLONE_UNTRACED;
         tracing::info!(
             "clone() from pid {pid}: removing CLONE_UNTRACED (0x{:x} -> 0x{:x})",
-            flags, new_flags
+            flags,
+            new_flags
         );
 
         // Modify the flags argument
@@ -1002,7 +1057,8 @@ fn handle_clone3_enter(pid: Pid, regs: &libc::user_regs_struct) -> Result<()> {
         let new_flags = flags & !CLONE_UNTRACED;
         tracing::info!(
             "clone3() from pid {pid}: removing CLONE_UNTRACED (0x{:x} -> 0x{:x})",
-            flags, new_flags
+            flags,
+            new_flags
         );
         crate::tracer::memory::write_u64(pid, clone_args_ptr, new_flags)?;
     }

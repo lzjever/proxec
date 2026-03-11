@@ -43,11 +43,7 @@ fn test_version_flag() {
 
 #[test]
 fn test_missing_proxy() {
-    proxec_cmd()
-        .arg("echo")
-        .arg("hello")
-        .assert()
-        .failure();
+    proxec_cmd().arg("echo").arg("hello").assert().failure();
 }
 
 #[test]
@@ -63,7 +59,9 @@ fn test_proxy_env_vars_are_ignored_with_warning() {
         .arg("true")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Ignoring system proxy environment variables"));
+        .stdout(predicate::str::contains(
+            "Ignoring system proxy environment variables",
+        ));
 }
 
 #[test]

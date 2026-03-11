@@ -96,7 +96,11 @@ fn main() -> Result<()> {
 
     // Fork and exec child process
     let child_pid = tracer::fork_exec(&args.command, &args.args, use_seccomp)?;
-    tracing::info!("Started child process: {} (pid {})", args.command, child_pid);
+    tracing::info!(
+        "Started child process: {} (pid {})",
+        args.command,
+        child_pid
+    );
 
     // Run tracer loop (blocking)
     let disable_ipv6 = args.disable_ipv6 && !args.allow_ipv6_compat;

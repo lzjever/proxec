@@ -21,10 +21,7 @@ pub async fn connect(
 
     // Build CONNECT request
     let dest_str = format!("{}", dest);
-    let mut request = format!(
-        "CONNECT {} HTTP/1.1\r\nHost: {}\r\n",
-        dest_str, dest_str
-    );
+    let mut request = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n", dest_str, dest_str);
 
     // Add authentication if provided
     if let Some((user, pass)) = auth {
@@ -45,10 +42,16 @@ pub async fn connect(
 
     // Read response
     let mut response = vec![0u8; 1024];
-    let n = stream.read(&mut response).await.map_err(Error::ProxyConnect)?;
+    let n = stream
+        .read(&mut response)
+        .await
+        .map_err(Error::ProxyConnect)?;
     let response_str = String::from_utf8_lossy(&response[..n]);
 
-    tracing::debug!("Proxy response: {}", response_str.lines().next().unwrap_or(""));
+    tracing::debug!(
+        "Proxy response: {}",
+        response_str.lines().next().unwrap_or("")
+    );
 
     // Parse response
     let status_line = response_str.lines().next().unwrap_or("");

@@ -5,8 +5,8 @@
 //! no_proxy-style bypass rule parsing for connect() destinations.
 
 use crate::error::{Error, Result};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::net::ToSocketAddrs;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NoProxyRule {
@@ -140,7 +140,9 @@ fn parse_cidr(raw: &str) -> Result<IpNet> {
         IpAddr::V6(_) => 128,
     };
     if prefix_len > max_prefix {
-        return Err(Error::InvalidArgument(format!("invalid no-proxy CIDR: {raw}")));
+        return Err(Error::InvalidArgument(format!(
+            "invalid no-proxy CIDR: {raw}"
+        )));
     }
 
     Ok(IpNet { addr, prefix_len })
