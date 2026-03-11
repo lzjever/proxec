@@ -115,31 +115,102 @@ fn pending_shutdown_signal() -> Option<Signal> {
     }
 }
 
-fn begin_shutdown(pgid: Pid, signal: Signal) {
+fn terminate_active_tracees(
+    active_pids: &mut std::collections::HashSet<i32>,
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+    use_seccomp: bool,
+    signal: Signal,
+) {
+    let pids: Vec<i32> = active_pids.iter().copied().collect();
+    for raw_pid in pids {
+        let pid = Pid::from_raw(raw_pid);
+        let _ = signal::kill(pid, signal);
+        let result = if use_seccomp {
+            ptrace::cont(pid, Some(signal))
+        } else {
+            ptrace::syscall(pid, Some(signal))
+        };
+        match result {
+            Ok(()) => {}
+            Err(err) if is_esrch_nix(&err) => {
+                cleanup_dead_tracee(pid, thread_states, tracker, active_pids);
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+fn kill_active_tracees(
+    active_pids: &mut std::collections::HashSet<i32>,
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+) {
+    let pids: Vec<i32> = active_pids.iter().copied().collect();
+    for raw_pid in pids {
+        let pid = Pid::from_raw(raw_pid);
+        let _ = signal::kill(pid, Signal::SIGKILL);
+        let result = ptrace::kill(pid);
+        match result {
+            Ok(()) => {}
+            Err(err) if is_esrch_nix(&err) => {
+                cleanup_dead_tracee(pid, thread_states, tracker, active_pids);
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+fn begin_shutdown(
+    pgid: Pid,
+    signal: Signal,
+    active_pids: &mut std::collections::HashSet<i32>,
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+    use_seccomp: bool,
+) {
     tracing::warn!(
         "Received {}; terminating traced process group {}",
         signal.as_str(),
         pgid
     );
     let _ = signal::killpg(pgid, Signal::SIGTERM);
+    terminate_active_tracees(active_pids, thread_states, tracker, use_seccomp, Signal::SIGTERM);
 }
 
-fn escalate_shutdown(pgid: Pid) {
+fn escalate_shutdown(
+    pgid: Pid,
+    active_pids: &mut std::collections::HashSet<i32>,
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+) {
     tracing::warn!("Shutdown timeout exceeded; force-killing process group {}", pgid);
     let _ = signal::killpg(pgid, Signal::SIGKILL);
+    kill_active_tracees(active_pids, thread_states, tracker);
 }
 
 fn update_shutdown_state(
     shutdown: &mut Option<ShutdownState>,
     pgid: Pid,
     exit_code: &mut i32,
+    active_pids: &mut std::collections::HashSet<i32>,
+    thread_states: &mut std::collections::HashMap<i32, ThreadState>,
+    tracker: &Arc<Mutex<SocketTracker>>,
+    use_seccomp: bool,
 ) {
     let Some(signal) = pending_shutdown_signal() else {
         return;
     };
 
     if shutdown.is_none() {
-        begin_shutdown(pgid, signal);
+        begin_shutdown(
+            pgid,
+            signal,
+            active_pids,
+            thread_states,
+            tracker,
+            use_seccomp,
+        );
         *exit_code = 128 + signal as i32;
         *shutdown = Some(ShutdownState {
             signal,
@@ -155,7 +226,7 @@ fn update_shutdown_state(
     if !state.escalated
         && (SHUTDOWN_COUNT.load(Ordering::SeqCst) > 1 || state.started_at.elapsed() >= Duration::from_secs(2))
     {
-        escalate_shutdown(pgid);
+        escalate_shutdown(pgid, active_pids, thread_states, tracker);
         state.escalated = true;
     }
 }
@@ -276,7 +347,15 @@ pub fn run(
     let mut exit_code = 0;
 
     loop {
-        update_shutdown_state(&mut shutdown, process_group, &mut exit_code);
+        update_shutdown_state(
+            &mut shutdown,
+            process_group,
+            &mut exit_code,
+            &mut active_pids,
+            &mut thread_states,
+            &tracker,
+            use_seccomp,
+        );
         // Wait for any traced task, including clone()-created threads.
         match wait_for_tracee() {
             Ok(WaitStatus::Exited(pid, code)) => {
@@ -493,7 +572,15 @@ pub fn run(
             }
             Err(e) => {
                 if e == nix::errno::Errno::EINTR {
-                    update_shutdown_state(&mut shutdown, process_group, &mut exit_code);
+                    update_shutdown_state(
+                        &mut shutdown,
+                        process_group,
+                        &mut exit_code,
+                        &mut active_pids,
+                        &mut thread_states,
+                        &tracker,
+                        use_seccomp,
+                    );
                     continue;
                 }
                 if e == nix::errno::Errno::ECHILD {
