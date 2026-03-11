@@ -7,6 +7,7 @@
 use crate::error::{Error, Result};
 use crate::tracer::seccomp;
 use nix::sys::ptrace;
+use nix::unistd::setpgid;
 use nix::unistd::{fork, Pid};
 use std::ffi::CString;
 
@@ -41,6 +42,10 @@ pub fn fork_exec(command: &str, args: &[String], use_seccomp: bool) -> Result<Pi
         }
         nix::unistd::ForkResult::Child => {
             // Child process
+            setpgid(Pid::from_raw(0), Pid::from_raw(0)).expect("setpgid failed");
+            unsafe {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            }
 
             ptrace::traceme().expect("ptrace TRACEME failed");
 

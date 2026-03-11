@@ -19,11 +19,16 @@ use crate::tracer::{
 };
 use crate::tracer::arch_x86_64::syscall::{CLONE, CLONE3, CLOSE, CONNECT, SOCKET};
 use nix::sys::ptrace;
-use nix::sys::signal::Signal;
+use nix::sys::signal::{self, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+static SHUTDOWN_SIGNAL: AtomicI32 = AtomicI32::new(0);
+static SHUTDOWN_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SyscallPhase {
@@ -68,6 +73,91 @@ struct TraceStats {
     connect_rewritten: u64,
     socket_enter_seen: u64,
     socket_exit_seen: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ShutdownState {
+    signal: Signal,
+    started_at: Instant,
+    escalated: bool,
+}
+
+extern "C" fn handle_shutdown_signal(sig: i32) {
+    if SHUTDOWN_SIGNAL.load(Ordering::SeqCst) == 0 {
+        SHUTDOWN_SIGNAL.store(sig, Ordering::SeqCst);
+    }
+    SHUTDOWN_COUNT.fetch_add(1, Ordering::SeqCst);
+}
+
+fn install_shutdown_handlers() -> Result<()> {
+    let action = SigAction::new(
+        SigHandler::Handler(handle_shutdown_signal),
+        signal::SaFlags::empty(),
+        SigSet::empty(),
+    );
+    for sig in [Signal::SIGINT, Signal::SIGTERM, Signal::SIGHUP] {
+        unsafe {
+            signal::sigaction(sig, &action).map_err(Error::Ptrace)?;
+        }
+    }
+    SHUTDOWN_SIGNAL.store(0, Ordering::SeqCst);
+    SHUTDOWN_COUNT.store(0, Ordering::SeqCst);
+    Ok(())
+}
+
+fn pending_shutdown_signal() -> Option<Signal> {
+    match SHUTDOWN_SIGNAL.load(Ordering::SeqCst) {
+        0 => None,
+        libc::SIGINT => Some(Signal::SIGINT),
+        libc::SIGTERM => Some(Signal::SIGTERM),
+        libc::SIGHUP => Some(Signal::SIGHUP),
+        _ => Some(Signal::SIGTERM),
+    }
+}
+
+fn begin_shutdown(pgid: Pid, signal: Signal) {
+    tracing::warn!(
+        "Received {}; terminating traced process group {}",
+        signal.as_str(),
+        pgid
+    );
+    let _ = signal::killpg(pgid, Signal::SIGTERM);
+}
+
+fn escalate_shutdown(pgid: Pid) {
+    tracing::warn!("Shutdown timeout exceeded; force-killing process group {}", pgid);
+    let _ = signal::killpg(pgid, Signal::SIGKILL);
+}
+
+fn update_shutdown_state(
+    shutdown: &mut Option<ShutdownState>,
+    pgid: Pid,
+    exit_code: &mut i32,
+) {
+    let Some(signal) = pending_shutdown_signal() else {
+        return;
+    };
+
+    if shutdown.is_none() {
+        begin_shutdown(pgid, signal);
+        *exit_code = 128 + signal as i32;
+        *shutdown = Some(ShutdownState {
+            signal,
+            started_at: Instant::now(),
+            escalated: false,
+        });
+        return;
+    }
+
+    let Some(state) = shutdown.as_mut() else {
+        return;
+    };
+    if !state.escalated
+        && (SHUTDOWN_COUNT.load(Ordering::SeqCst) > 1 || state.started_at.elapsed() >= Duration::from_secs(2))
+    {
+        escalate_shutdown(pgid);
+        state.escalated = true;
+    }
 }
 
 fn ptrace_options(use_seccomp: bool) -> ptrace::Options {
@@ -165,8 +255,11 @@ pub fn run(
     disable_ipv6: bool,
     use_seccomp: bool,
 ) -> Result<i32> {
+    install_shutdown_handlers()?;
     let mut thread_states: std::collections::HashMap<i32, ThreadState> = std::collections::HashMap::new();
     let mut stats = TraceStats::default();
+    let mut shutdown: Option<ShutdownState> = None;
+    let process_group = child_pid;
     // Track all active traced processes
     let mut active_pids: std::collections::HashSet<i32> = std::collections::HashSet::new();
     active_pids.insert(child_pid.as_raw());
@@ -183,6 +276,7 @@ pub fn run(
     let mut exit_code = 0;
 
     loop {
+        update_shutdown_state(&mut shutdown, process_group, &mut exit_code);
         // Wait for any traced task, including clone()-created threads.
         match wait_for_tracee() {
             Ok(WaitStatus::Exited(pid, code)) => {
@@ -399,6 +493,7 @@ pub fn run(
             }
             Err(e) => {
                 if e == nix::errno::Errno::EINTR {
+                    update_shutdown_state(&mut shutdown, process_group, &mut exit_code);
                     continue;
                 }
                 if e == nix::errno::Errno::ECHILD {
@@ -415,6 +510,14 @@ pub fn run(
                 return Err(Error::Wait(e));
             }
         }
+    }
+
+    if let Some(state) = shutdown {
+        tracing::info!(
+            "Shutdown completed after {}; traced process group {} exited",
+            state.signal.as_str(),
+            process_group
+        );
     }
 
     tracing::info!(
