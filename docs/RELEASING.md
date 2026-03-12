@@ -23,8 +23,9 @@
 ## Cut a release
 
 ```bash
-git tag -a v0.1.0 -m "proxec v0.1.0"
-git push origin v0.1.0
+version=0.1.1
+git tag -a "v${version}" -m "proxec v${version}"
+git push origin "v${version}"
 ```
 
 The `release.yml` workflow will build the Linux release tarball and publish it to GitHub Releases.

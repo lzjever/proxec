@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-12
+
+### Changed
+- Align the published crate metadata and GitHub repository URL with the public `lzjever/proxec` release
+- Re-cut the first public release from the current green `master` so CI status, tag, and downloadable binary match
+
 ## [0.1.0] - 2026-03-11
 
 ### Added
